@@ -120,7 +120,7 @@ jobs:
             if (!body) {
               body = 'Translation failed or empty.';
             } else {
-              body = '### English Translation\n\n' + body;
+              body = '### Translation\n\n' + body;
             }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
