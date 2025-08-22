@@ -1,55 +1,78 @@
-name: Issue Translation via GitHub Models
+name: Translate Issue to English
 
 on:
   issues:
-    types: [opened]
+    types: [opened, labeled]
 
 permissions:
   contents: read
   issues: write
   models: read
 
+concurrency:
+  group: issue-translation-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 jobs:
   translate:
+    if: >
+      (github.event_name == 'issues') && (
+        (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'translate:en')) ||
+        (github.event.action == 'labeled' && github.event.label.name == 'translate:en')
+      )
     runs-on: ubuntu-latest
     steps:
-      - name: Run AI Inference
+      - name: Run AI Inference (translate to English)
         id: inference
-        uses: actions/ai-inference@v2
+        uses: actions/ai-inference@v1
         with:
-          model: openai/gpt-5-nano
-          system-prompt: >-
-            You are a professional technical translator. If target language is empty, default to English. Preserve Markdown structure and code blocks. Output only compact JSON: {"title": string, "body": string}. No extra text.
-          prompt: |-
-            Translate the following GitHub Issue into "${{ vars.TARGET_LANG }}" and return ONLY JSON with keys title and body. Keep code blocks unchanged.
+          system-prompt: >
+            You are a professional translator. Translate Japanese to English.
+            Keep Markdown structure, code blocks and links intact.
+            Do not add commentary or apologies. Output English only.
+          prompt: |
+            Translate the following GitHub Issue to English.
+            Preserve Markdown structure, code fences, and links.
+            Output in Markdown with the following sections:
 
-            Title:
-            ${{ github.event.issue.title }}
+            ## Title
+            - Provide an English title only.
 
-            Body:
+            ## Body
+            - Provide the English translation of the body.
+
+            ----
+            Original Title:
+            "${{ github.event.issue.title }}"
+
+            Original Body:
+            """
             ${{ github.event.issue.body }}
-
-      - name: Post translation comment
+            """
+          max-tokens: 2000
+      - name: Comment translation to the issue
         uses: actions/github-script@v7
         env:
           RESPONSE: ${{ steps.inference.outputs.response }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RESPONSE_FILE: ${{ steps.inference.outputs['response-file'] }}
         with:
           script: |
-            const response = process.env.RESPONSE || '';
-            let text = response.trim();
-            text = text.replace(/^```(?:json)?\s*/i, '').replace(/```$/, '');
-            let data;
-            try {
-              data = JSON.parse(text);
-            } catch {
-              data = { title: '', body: text };
+            const fs = require('fs');
+            const responseFile = process.env.RESPONSE_FILE;
+            let body = process.env.RESPONSE || '';
+            if (responseFile && responseFile.length) {
+              try { body = fs.readFileSync(responseFile, 'utf8'); } catch (_) {}
             }
-            const body = `### 翻訳\n\n#### Title\n${data.title || ''}\n\n#### Body\n${data.body || ''}`;
+            body = (body || '').trim();
+            if (!body) {
+              body = 'Translation failed or empty.';
+            } else {
+              body = '### English Translation\n\n' + body;
+            }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: Number(process.env.ISSUE_NUMBER),
+              issue_number: context.issue.number,
               body
             });
 
