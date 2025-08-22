@@ -24,8 +24,9 @@ jobs:
     steps:
       - name: Run AI Inference (translate to English)
         id: inference
-        uses: actions/ai-inference@v1
+        uses: actions/ai-inference@v2
         with:
+          model: openai/gpt-4o
           system-prompt: >
             You are a professional translator. Translate Japanese to English.
             Keep Markdown structure, code blocks and links intact.
