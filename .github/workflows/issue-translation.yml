@@ -13,74 +13,45 @@ jobs:
   translate:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Run AI Inference
+        id: inference
+        uses: actions/ai-inference@v2
+        with:
+          model: openai/gpt-5-nano
+          system-prompt: >-
+            You are a professional technical translator. If target language is empty, default to English. Preserve Markdown structure and code blocks. Output only compact JSON: {"title": string, "body": string}. No extra text.
+          prompt: |-
+            Translate the following GitHub Issue into "${{ vars.TARGET_LANG }}" and return ONLY JSON with keys title and body. Keep code blocks unchanged.
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+            Title:
+            ${{ github.event.issue.title }}
 
-      - name: Translate Issue with GitHub Models
+            Body:
+            ${{ github.event.issue.body }}
+          max-tokens: 800
+
+      - name: Post translation comment
+        uses: actions/github-script@v7
         env:
-          TARGET_LANG: ${{ vars.TARGET_LANG }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          TARGET_LANG="${TARGET_LANG:-ja}"
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
-          ISSUE_TITLE="${{ github.event.issue.title }}"
-          ISSUE_BODY="${{ github.event.issue.body }}"
-
-          PAYLOAD=$(jq -n \
-            --arg target "$TARGET_LANG" \
-            --arg title "$ISSUE_TITLE" \
-            --arg body "$ISSUE_BODY" \
-            '{
-              model: "openai/gpt-4o-mini",
-              temperature: 0.2,
-              messages: [
-                {
-                  role: "system",
-                  content: "You are a professional technical translator. Preserve Markdown structure and code blocks. Output only compact JSON: {\"title\": string, \"body\": string}. No extra text."
-                },
-                {
-                  role: "user",
-                  content: ("Translate the following GitHub Issue into " + $target + " and return ONLY JSON with keys title and body. Keep code blocks unchanged.\n\nTitle:\n" + $title + "\n\nBody:\n" + $body)
-                }
-              ]
-            }')
-
-          RESPONSE=$(curl -sS https://models.inference.ai.azure.com/chat/completions \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
-
-          CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
-
-          if [ -z "$CONTENT" ]; then
-            echo "No content from model. Full response:"
-            echo "$RESPONSE"
-            exit 1
-          fi
-
-          # Remove code fences if present
-          JSON_CONTENT=$(printf '%s' "$CONTENT" | sed -E '1s/^```(json)?[[:space:]]*//; $s/[[:space:]]*```$//')
-
-          TRANSLATED_TITLE=$(printf '%s' "$JSON_CONTENT" | jq -r '.title // .Title // empty' 2>/dev/null || true)
-          TRANSLATED_BODY=$(printf '%s' "$JSON_CONTENT" | jq -r '.body // .Body // empty' 2>/dev/null || true)
-
-          if [ -z "$TRANSLATED_TITLE" ] || [ -z "$TRANSLATED_BODY" ]; then
-            echo "Falling back: could not parse JSON; using raw content as body."
-            TRANSLATED_TITLE="$ISSUE_TITLE"
-            TRANSLATED_BODY="$CONTENT"
-          fi
-
-          COMMENT_MD=$(printf "### 翻訳（%s）\n\n#### Title\n%s\n\n#### Body\n%s\n" "$TARGET_LANG" "$TRANSLATED_TITLE" "$TRANSLATED_BODY")
-
-          curl -sS -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/issues/$ISSUE_NUMBER/comments \
-            -d "$(jq -n --arg body "$COMMENT_MD" '{body: $body}')"
+          RESPONSE: ${{ steps.inference.outputs.response }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        with:
+          script: |
+            const response = process.env.RESPONSE || '';
+            let text = response.trim();
+            text = text.replace(/^```(?:json)?\s*/i, '').replace(/```$/, '');
+            let data;
+            try {
+              data = JSON.parse(text);
+            } catch {
+              data = { title: '', body: text };
+            }
+            const body = `### 翻訳\n\n#### Title\n${data.title || ''}\n\n#### Body\n${data.body || ''}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              body
+            });
 
 
