@@ -27,7 +27,7 @@ jobs:
         uses: actions/ai-inference@v2
         continue-on-error: true
         with:
-          model: openai/gpt-4o
+          model: openai/gpt-5-nano
           system-prompt: >
             You are a professional translator. Translate Japanese to English.
             Keep Markdown structure, code blocks and links intact.
@@ -59,7 +59,7 @@ jobs:
           RESPONSE_FILE: ${{ steps.inference.outputs['response-file'] }}
           GITHUB_TOKEN: ${{ github.token }}
           INFERENCE_ENDPOINT: https://models.github.ai/inference
-          INFERENCE_MODEL: openai/gpt-4o
+          INFERENCE_MODEL: openai/gpt-5-nano
         with:
           script: |
             const fs = require('fs');
@@ -73,7 +73,7 @@ jobs:
             if (!body) {
               const endpoint = (process.env.INFERENCE_ENDPOINT || '').replace(/\/$/, '') || 'https://models.github.ai/inference';
               const token = process.env.GITHUB_TOKEN;
-              const model = process.env.INFERENCE_MODEL || 'openai/gpt-4o';
+              const model = process.env.INFERENCE_MODEL || 'openai/gpt-5-nano';
 
               const systemPrompt = [
                 'You are a professional translator. Translate Japanese to English.',
