@@ -25,6 +25,7 @@ jobs:
       - name: Run AI Inference (translate to English)
         id: inference
         uses: actions/ai-inference@v2
+        continue-on-error: true
         with:
           model: openai/gpt-4o
           system-prompt: >
@@ -56,6 +57,9 @@ jobs:
         env:
           RESPONSE: ${{ steps.inference.outputs.response }}
           RESPONSE_FILE: ${{ steps.inference.outputs['response-file'] }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INFERENCE_ENDPOINT: https://models.github.ai/inference
+          INFERENCE_MODEL: openai/gpt-4o
         with:
           script: |
             const fs = require('fs');
@@ -65,6 +69,54 @@ jobs:
               try { body = fs.readFileSync(responseFile, 'utf8'); } catch (_) {}
             }
             body = (body || '').trim();
+            // Fallback: direct call to GitHub Models if ai-inference outputs are empty
+            if (!body) {
+              const endpoint = (process.env.INFERENCE_ENDPOINT || '').replace(/\/$/, '') || 'https://models.github.ai/inference';
+              const token = process.env.GITHUB_TOKEN;
+              const model = process.env.INFERENCE_MODEL || 'openai/gpt-4o';
+
+              const systemPrompt = [
+                'You are a professional translator. Translate Japanese to English.',
+                'Keep Markdown structure, code blocks and links intact.',
+                'Do not add commentary or apologies. Output English only.'
+              ].join(' ');
+
+              const issueTitle = context.payload.issue?.title || '';
+              const issueBody = context.payload.issue?.body || '';
+              const userPrompt = `Translate the following GitHub Issue to English.\n` +
+                `Preserve Markdown structure, code fences, and links.\n` +
+                `Output in Markdown with the following sections:\n\n` +
+                `## Title\n- Provide an English title only.\n\n` +
+                `## Body\n- Provide the English translation of the body.\n\n` +
+                `----\n` +
+                `Original Title:\n"${issueTitle}"\n\n` +
+                `Original Body:\n"""\n${issueBody}\n"""`;
+
+              const res = await fetch(`${endpoint}/v1/chat/completions`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  model,
+                  messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                  ],
+                  max_tokens: 2000
+                })
+              });
+
+              if (!res.ok) {
+                const text = await res.text().catch(() => '');
+                throw new Error(`Direct inference failed: ${res.status} ${res.statusText} ${text}`);
+              }
+              const data = await res.json();
+              body = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+              body = (body || '').trim();
+            }
+
             if (!body) {
               body = 'Translation failed or empty.';
             } else {
