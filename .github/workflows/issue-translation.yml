@@ -28,7 +28,6 @@ jobs:
 
             Body:
             ${{ github.event.issue.body }}
-          max-tokens: 800
 
       - name: Post translation comment
         uses: actions/github-script@v7
